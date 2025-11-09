@@ -1,5 +1,21 @@
 # Changelog
 
+## v3.1.0 - 2025-09-09
+
+- The `describe_error` function has been added.
+
+## v3.0.0 - 2025-06-28
+
+- IPv6 support added. By default IPv6 will be used and IPv4 will be used as a
+  fallback. This can be configured with the `ip_version_preference` option.
+- `connect` now returns the new `ConnectError` type when it fails.
+
+## v2.0.0 - 2025-06-19
+
+- `selecting_tcp_messages` has been renamed to `select_tcp_messages`.
+- Updated for gleam_erlang v1.0.0.
+- Updated for gleam_stdlib v0.60.0.
+
 ## v1.2.0 - 2024-12-04
 
 - Updated for gleam_stdlib v0.44.0.

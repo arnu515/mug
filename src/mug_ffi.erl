@@ -1,6 +1,13 @@
 -module(mug_ffi).
 
--export([send/2, recv/3, shutdown/1, coerce/1, ssl_upgrade/3, ssl_connect/4, get_certs_keys/1, ssl_downgrade/2, get_system_cacerts/0]).
+-export([send/2, recv/3, shutdown/1, coerce_tcp_message/1, active_once/0, passive/0]).
+-export([ssl_upgrade/3, ssl_connect/4, ssl_downgrade/2, get_certs_keys/1, get_system_cacerts/0]).
+
+active_once() ->
+    once.
+
+passive() ->
+    false.
 
 send({tcp_socket, Socket}, Packet) ->
     normalise(gen_tcp:send(Socket, Packet));
@@ -53,10 +60,20 @@ get_system_cacerts() ->
         error:{failed_load_certs, Reason} -> {error, Reason}
     end.
 
-normalise(ok) -> {ok, nil};
-normalise({ok, T}) -> {ok, T};
-normalise({error, {timeout, _}}) -> {error, timeout};
-normalise({error, {tls_alert, {Alert, Description}}}) -> {error, {tls_alert, Alert, list_to_binary(Description)}};
-normalise({error, _} = E) -> E.
+normalise(ok) ->
+    {ok, nil};
+normalise({ok, T}) ->
+    {ok, T};
+normalise({error, {timeout, _}}) ->
+    {error, timeout};
+normalise({error, {tls_alert, {Alert, Description}}}) ->
+    {error, {tls_alert, Alert, list_to_binary(Description)}};
+normalise({error, _} = E) ->
+    E.
 
-coerce(T) -> T.
+coerce_tcp_message({tcp, Socket, Data}) ->
+    {packet, Socket, Data};
+coerce_tcp_message({tcp_closed, Socket}) ->
+    {socket_closed, Socket};
+coerce_tcp_message({tcp_error, Socket, Error}) ->
+    {tcp_error, Socket, Error}.
