@@ -14,6 +14,12 @@ if [[ (-f server.crt || -f server.key || -f server.csr || -f ca.crt || -f ca.key
   exit 1
 fi
 
+if ! command -v openssl &> /dev/null; then
+  echo "'openssl' is required to generate certificates" >&2
+  echo "Please install openssl and run this script again"
+  exit 1
+fi
+
 echo "Removing exiting certificates..."
 find . -maxdepth 1 -type f ! -name 'gencerts.sh' -delete
 
