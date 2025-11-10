@@ -3,7 +3,6 @@ import gleam/bytes_tree.{from_string as bits}
 import gleam/erlang/process
 import gleam/option
 import gleam/string
-import gleeunit/should
 import mug
 
 pub const port = 64_794
@@ -35,7 +34,10 @@ pub fn connect_with_system_ca_test() {
 }
 
 pub fn connect_without_system_ca_test() {
-  let assert Error(mug.TlsAlert(mug.UnknownCa, _)) =
+  let assert Error(mug.ConnectFailedBoth(
+    mug.TlsAlert(mug.UnknownCa, _),
+    mug.TlsAlert(mug.UnknownCa, _),
+  )) =
     mug.new("gleam.run", port: 443)
     |> mug.timeout(milliseconds: 10_000)
     |> mug.with_tls()
@@ -45,11 +47,47 @@ pub fn connect_without_system_ca_test() {
 }
 
 pub fn connect_invalid_host_test() {
-  let assert Error(mug.Nxdomain) =
-    mug.new("invalid.example.com", port: port)
+  assert mug.new("invalid.example.com", port: port)
     |> mug.timeout(milliseconds: 500)
     |> mug.with_tls()
     |> mug.connect()
+    == Error(mug.ConnectFailedBoth(mug.Nxdomain, mug.Nxdomain))
+}
+
+pub fn connect_invalid_host_only_ipv4_test() {
+  assert mug.new("invalid.example.com", port: port)
+    |> mug.ip_version_preference(mug.Ipv4Only)
+    |> mug.timeout(milliseconds: 500)
+    |> mug.with_tls()
+    |> mug.connect()
+    == Error(mug.ConnectFailedIpv4(mug.Nxdomain))
+}
+
+pub fn connect_invalid_host_only_ipv6_test() {
+  assert mug.new("invalid.example.com", port: port)
+    |> mug.ip_version_preference(mug.Ipv6Only)
+    |> mug.timeout(milliseconds: 500)
+    |> mug.with_tls()
+    |> mug.connect()
+    == Error(mug.ConnectFailedIpv6(mug.Nxdomain))
+}
+
+pub fn connect_invalid_host_prefer_ipv4_test() {
+  assert mug.new("invalid.example.com", port: port)
+    |> mug.ip_version_preference(mug.Ipv4Preferred)
+    |> mug.timeout(milliseconds: 500)
+    |> mug.with_tls()
+    |> mug.connect()
+    == Error(mug.ConnectFailedBoth(mug.Nxdomain, mug.Nxdomain))
+}
+
+pub fn connect_invalid_host_prefer_ipv6_test() {
+  assert mug.new("invalid.example.com", port: port)
+    |> mug.ip_version_preference(mug.Ipv6Preferred)
+    |> mug.timeout(milliseconds: 500)
+    |> mug.with_tls()
+    |> mug.connect()
+    == Error(mug.ConnectFailedBoth(mug.Nxdomain, mug.Nxdomain))
 }
 
 pub fn upgrade_test() {
@@ -61,7 +99,7 @@ pub fn upgrade_test() {
   let assert True = mug.socket_is_tls(socket)
   let assert Ok(Nil) = mug.send(socket, <<"Hello, Joe!\n":utf8>>)
   let assert Ok(data) = mug.receive(socket, 500)
-  should.equal(data, <<"Hello, Joe!\n":utf8>>)
+  assert data == <<"Hello, Joe!\n":utf8>>
   let assert Ok(_) = mug.shutdown(socket)
   Nil
 }
@@ -106,10 +144,8 @@ pub fn hello_world_test() {
 
   let assert Ok(packet) = mug.receive(socket, timeout_milliseconds: 100)
   let assert Ok(packet) = bit_array.to_string(packet)
-  string.split(packet, "\n")
-  |> should.equal([
-    "Hello, Joe!", "Hello, Mike!", "System still working?", "Seems to be!",
-  ])
+  assert string.split(packet, "\n")
+    == ["Hello, Joe!", "Hello, Mike!", "System still working?", "Seems to be!"]
 
   let assert Ok(_) = mug.shutdown(socket)
 
@@ -131,26 +167,25 @@ pub fn active_mode_test() {
   mug.receive_next_packet_as_message(socket)
 
   // The socket is in use, we can't receive from it directly
-  let assert Error(mug.Einval) = mug.receive(socket, 0)
+  assert Error(mug.Einval) == mug.receive(socket, 0)
 
   // Send a message to the socket
-  let assert Ok(Nil) = mug.send(socket, <<"Hello, Joe!\n":utf8>>)
+  assert Ok(Nil) == mug.send(socket, <<"Hello, Joe!\n":utf8>>)
 
   let selector =
     process.new_selector()
-    |> mug.selecting_tls_messages(fn(msg) { msg })
+    |> mug.select_tls_messages(fn(msg) { msg })
 
   let assert Ok(mug.Packet(packet_socket, <<"Hello, Joe!\n":utf8>>)) =
-    process.select(selector, 1000)
+    process.selector_receive(selector, 1000)
 
-  packet_socket
-  |> should.equal(socket)
+  assert packet_socket == socket
 
   // Send another packet
   let assert Ok(Nil) = mug.send(socket, <<"Hello, Mike!\n":utf8>>)
 
   // The socket is in passive mode, so we don't get another message.
-  let assert Error(Nil) = process.select(selector, 100)
+  let assert Error(Nil) = process.selector_receive(selector, 100)
 
   // The socket is back in passive mode, we can receive from it directly again.
   let assert Ok(<<"Hello, Mike!\n":utf8>>) = mug.receive(socket, 0)

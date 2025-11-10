@@ -5,7 +5,6 @@ import gleam/erlang/process
 import gleam/option.{None}
 import gleam/string
 import gleeunit
-import gleeunit/should
 import glisten
 import glisten/transport
 import mug
@@ -16,8 +15,8 @@ pub const port = 64_793
 
 pub fn main() {
   // Start an echo TCP server for the tests to use
-  let handler =
-    glisten.handler(fn(_) { #(Nil, None) }, fn(msg, state, conn) {
+  let builder =
+    glisten.new(fn(_) { #(Nil, None) }, fn(state, msg, conn) {
       let assert glisten.Packet(msg) = msg
       // Close connection if we receive a null, otherwise echo back.
       let assert Ok(_) = case msg {
@@ -28,14 +27,14 @@ pub fn main() {
       glisten.continue(state)
     })
   // TODO: use new glisten methods
-  let assert Ok(_) = glisten.serve(handler, port)
+  let assert Ok(_) = glisten.start(builder, port)
   let assert Ok(_) =
-    glisten.serve_ssl(
-      handler,
-      ssl_port,
+    glisten.with_tls(
+      builder,
       certfile: "test/certs/server.crt",
       keyfile: "test/certs/server.key",
     )
+    |> glisten.start(ssl_port)
 
   gleeunit.main()
 }
@@ -160,8 +159,7 @@ pub fn active_mode_close_test() {
   let assert Ok(mug.SocketClosed(closed_socket)) =
     process.selector_receive(selector, 100)
 
-  closed_socket
-  |> should.equal(socket)
+  closed_socket == socket
 }
 
 pub fn active_mode_error_test() {
@@ -174,10 +172,15 @@ pub fn active_mode_error_test() {
     process.new_selector()
     |> mug.select_tcp_messages(fn(msg) { msg })
 
-  raw_send(process.self(), #(atom.create("tcp_error"), socket, mug.Ehostdown))
+  let tcp_socket = unsafe_element(2, socket)
+  raw_send(process.self(), #(
+    atom.create("tcp_error"),
+    tcp_socket,
+    mug.Ehostdown,
+  ))
   let assert Ok(mug.TcpError(error_socket, mug.Ehostdown)) =
     process.selector_receive(selector, 100)
-  error_socket |> should.equal(socket)
+  assert error_socket == socket
 }
 
 pub fn exact_bytes_receive_test() {
@@ -210,3 +213,6 @@ pub fn exact_bytes_receive_not_enough_test() {
 
 @external(erlang, "erlang", "send")
 fn raw_send(pid: process.Pid, msg: a) -> Nil
+
+@external(erlang, "erlang", "element")
+fn unsafe_element(n: Int, tup: a) -> b
