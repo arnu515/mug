@@ -6,9 +6,10 @@ import gleam/erlang/process
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
-import gleam/string
 import mug/internal/ssl_options.{
-  type SslOptionName, Cacertfile, Cacerts, CertsKeys, Verify,
+  type ActiveValue, type CertKeyConf, type ModeValue, type SslOption, Binary,
+  Cacertfile, Cacerts, CertsKeys, Verify, VerifyNone, VerifyPeer, active_once,
+  combined_cert_into_cacerts, list_into_cacerts, passive,
 }
 import mug/internal/system_cacerts
 
@@ -343,6 +344,17 @@ pub fn describe_error(error: Error) -> String {
     Estale -> "Stale file handle"
     Etxtbsy -> "Text file busy"
     Exdev -> "Cross-device link"
+    Options(_) -> "Invalid option passed"
+    SystemCacertificatesGetError(err) ->
+      "Unable to get system certificates: "
+      <> case err {
+        system_cacerts.Enoent -> "No such file or directory"
+        system_cacerts.Enotsup -> "Not supported"
+        system_cacerts.Eopnotsup -> "Operation not supported"
+        system_cacerts.NoCacertsFound -> "No system certificates were found"
+      }
+    // TODO: better error message
+    TlsAlert(alert:, description:) -> "TLS Alert"
   }
 }
 
@@ -607,70 +619,41 @@ pub fn certificates_keys(
 }
 
 // TODO: Merge with method below
-pub fn connect(options: ConnectionOptions) -> Result(Socket, Error) {
-  let host = charlist.from_string(options.host)
-  case options.tls_opts {
-    UseTls(TlsOptions(vm)) -> {
-      use opts <- result.try(get_tls_options(vm))
-      ssl_connect(host, options.port, opts, options.timeout)
-      |> result.map(SslSocket)
-    }
-    _ -> {
-      let gen_options = [
-        // When data is received on the socket queue it in the TCP stack rather than
-        // sending it as an Erlang message to the socket owner's inbox.
-        #(Active, dynamic.from(False)),
-        // We want the data from the socket as bit arrays please, not lists.
-        #(Mode, dynamic.from(Binary)),
-      ]
-      gen_tcp_connect(host, options.port, gen_options, options.timeout)
-      |> result.map(TcpSocket)
-    }
-  }
-}
-
-/// Establish a TCP/TLS connection to the server specified in the connection
-/// options.
-///
-/// Returns an error if the connection could not be established.
-///
-/// The socket is created in passive mode, meaning the the `receive` function is
-/// to be called to receive packets from the client. The
-/// `receive_next_packet_as_message` function can be used to switch the socket
-/// to active mode and receive the next packet as an Erlang message.
-///
 pub fn connect(options: ConnectionOptions) -> Result(Socket, ConnectError) {
   let host = charlist.from_string(options.host)
-  let connect = fn(inet) {
-    let gen_options = [
-      inet,
-      // When data is received on the socket queue it in the TCP stack rather than
-      // sending it as an Erlang message to the socket owner's inbox.
-      Active(passive()),
-      // We want the data from the socket as bit arrays please, not lists.
-      Mode(Binary),
-    ]
-    gen_tcp_connect(host, options.port, gen_options, options.timeout)
+  let connect = fn(use_inet6: Bool) {
+    case options.tls_opts {
+      UseTls(TlsOptions(vm)) -> {
+        use opts <- result.try(get_tls_options(vm, Some(use_inet6)))
+        ssl_connect(host, options.port, opts, options.timeout)
+        |> result.map(SslSocket)
+      }
+      _ -> {
+        get_tcp_options(use_inet6)
+        |> gen_tcp_connect(host, options.port, _, options.timeout)
+        |> result.map(TcpSocket)
+      }
+    }
   }
   case options.ip_version_preference {
-    Ipv4Only -> connect(Inet) |> result.map_error(ConnectFailedIpv4)
-    Ipv6Only -> connect(Inet6) |> result.map_error(ConnectFailedIpv6)
+    Ipv4Only -> connect(False) |> result.map_error(ConnectFailedIpv4)
+    Ipv6Only -> connect(True) |> result.map_error(ConnectFailedIpv6)
 
     Ipv4Preferred ->
-      case connect(Inet) {
+      case connect(False) {
         Ok(conn) -> Ok(conn)
         Error(ipv4) ->
-          case connect(Inet6) {
+          case connect(True) {
             Ok(conn) -> Ok(conn)
             Error(ipv6) -> Error(ConnectFailedBoth(ipv4:, ipv6:))
           }
       }
 
     Ipv6Preferred ->
-      case connect(Inet6) {
+      case connect(True) {
         Ok(conn) -> Ok(conn)
         Error(ipv6) ->
-          case connect(Inet) {
+          case connect(False) {
             Ok(conn) -> Ok(conn)
             Error(ipv4) -> Error(ConnectFailedBoth(ipv4:, ipv6:))
           }
@@ -678,17 +661,20 @@ pub fn connect(options: ConnectionOptions) -> Result(Socket, ConnectError) {
   }
 }
 
-type ModeValue {
-  Binary
+/// Returns the default gen_tcp options for mug
+fn get_tcp_options(use_inet6: Bool) -> List(GenTcpOption) {
+  [
+    case use_inet6 {
+      True -> Inet
+      False -> Inet6
+    },
+    // When data is received on the socket queue it in the TCP stack rather than
+    // sending it as an Erlang message to the socket owner's inbox.
+    Active(passive()),
+    // We want the data from the socket as bit arrays please, not lists.
+    Mode(Binary),
+  ]
 }
-
-type ActiveValue
-
-@external(erlang, "mug_ffi", "passive")
-fn passive() -> ActiveValue
-
-@external(erlang, "mug_ffi", "active_once")
-fn active_once() -> ActiveValue
 
 type GenTcpOption {
   /// Use IPv4
@@ -715,31 +701,30 @@ fn ssl_connect(
   timeout: Int,
 ) -> Result(SslSocket, Error)
 
-type VerifyValue {
-  VerifyPeer
-  VerifyNone
-}
-
-type SslOption =
-  #(SslOptionName, Dynamic)
-
-fn get_tls_options(vm: TlsVerificationMethod) -> Result(List(SslOption), Error) {
+fn get_tls_options(
+  vm: TlsVerificationMethod,
+  use_inet6: Option(Bool),
+) -> Result(List(SslOption), Error) {
   let opts = [
     // When data is received on the socket queue it in the TCP stack rather than
     // sending it as an Erlang message to the socket owner's inbox.
-    #(ssl_options.Active, dynamic.from(False)),
+    ssl_options.Active(passive()),
     // We want the data from the socket as bit arrays please, not lists.
-    #(ssl_options.Mode, dynamic.from(Binary)),
+    ssl_options.Mode(Binary),
   ]
+  let opts = case use_inet6 {
+    Some(True) -> [ssl_options.Inet6, ..opts]
+    Some(False) -> [ssl_options.Inet, ..opts]
+    None -> opts
+  }
   case vm {
-    DangerouslyDisableVerification ->
-      Ok([#(Verify, dynamic.from(VerifyNone)), ..opts])
+    DangerouslyDisableVerification -> Ok([Verify(VerifyNone), ..opts])
     Certificates(system, cacerts, certificates_keys) -> {
       use cacerts <- result.try(get_cacerts_opt(system, cacerts))
       Ok([
-        #(Verify, dynamic.from(VerifyPeer)),
+        Verify(VerifyPeer),
         cacerts,
-        #(CertsKeys, dynamic.from(get_certs_keys(certificates_keys))),
+        CertsKeys(get_certs_keys(certificates_keys)),
       ])
     }
   }
@@ -751,27 +736,27 @@ fn get_cacerts_opt(
 ) -> Result(SslOption, Error) {
   case system, cacerts {
     False, Some(DerEncodedCaCertificates(cacerts)) ->
-      Ok(#(Cacerts, dynamic.from(cacerts)))
+      Ok(Cacerts(list_into_cacerts(cacerts)))
     True, Some(DerEncodedCaCertificates(cacerts)) -> {
       let certs =
         system_cacerts.get() |> result.map_error(SystemCacertificatesGetError)
       use certs <- result.try(certs)
-      Ok(#(Cacerts, dynamic.from(list.flatten([certs.0, cacerts]))))
+      Ok(Cacerts(list_into_cacerts(list.flatten([certs.0, cacerts]))))
     }
     _, Some(PemEncodedCaCertificates(cacerts)) ->
-      Ok(#(Cacertfile, dynamic.from(string.to_utf_codepoints(cacerts))))
+      Ok(Cacertfile(charlist.from_string(cacerts)))
     True, None -> {
       let certs =
         system_cacerts.get() |> result.map_error(SystemCacertificatesGetError)
       use certs <- result.try(certs)
-      Ok(#(Cacerts, dynamic.from(certs)))
+      Ok(Cacerts(combined_cert_into_cacerts(certs)))
     }
-    False, None -> Ok(#(Cacerts, dynamic.from([])))
+    False, None -> Ok(Cacerts(list_into_cacerts([])))
   }
 }
 
 @external(erlang, "mug_ffi", "get_certs_keys")
-fn get_certs_keys(certs_keys: List(CertificatesKeys)) -> certs_keys
+fn get_certs_keys(certs_keys: List(CertificatesKeys)) -> List(CertKeyConf)
 
 @external(erlang, "mug_ffi", "ssl_upgrade")
 fn ssl_upgrade(
@@ -801,7 +786,7 @@ pub fn upgrade(
 ) -> Result(Socket, Error) {
   case socket {
     TcpSocket(socket) -> {
-      use opts <- result.try(get_tls_options(vm))
+      use opts <- result.try(get_tls_options(vm, None))
       ssl_upgrade(socket, opts, timeout)
       |> result.map(SslSocket)
     }
@@ -911,10 +896,9 @@ pub fn shutdown(socket: Socket) -> Result(Nil, Error)
 ///
 pub fn receive_next_packet_as_message(socket: Socket) -> Nil {
   case socket {
-    TcpSocket(socket) ->
-      set_tcp_socket_options(socket, [#(Active, dynamic.from(Once))])
+    TcpSocket(socket) -> set_tcp_socket_options(socket, [Active(active_once())])
     SslSocket(socket) ->
-      set_ssl_socket_options(socket, [#(ssl_options.Active, dynamic.from(Once))])
+      set_ssl_socket_options(socket, [ssl_options.Active(active_once())])
   }
   Nil
 }
@@ -933,7 +917,7 @@ fn set_ssl_socket_options(
 
 /// Messages that can be sent by the socket to the process that controls it.
 ///
-pub type TcpMessage {
+pub type Message {
   /// A packet has been received from the client.
   Packet(Socket, BitArray)
   /// The socket has been closed by the client.
@@ -950,7 +934,7 @@ pub type TcpMessage {
 ///
 pub fn select_tcp_messages(
   selector: process.Selector(t),
-  mapper: fn(TcpMessage) -> t,
+  mapper: fn(Message) -> t,
 ) -> process.Selector(t) {
   let tcp = atom.create("tcp")
   let closed = atom.create("tcp_closed")
@@ -968,13 +952,13 @@ pub fn select_tcp_messages(
 /// controls, rather than any specific one. If you wish to only handle messages
 /// from one socket then use one process per socket.
 ///
-pub fn selecting_tls_messages(
+pub fn select_tls_messages(
   selector: process.Selector(t),
-  mapper: fn(TcpMessage) -> t,
+  mapper: fn(Message) -> t,
 ) -> process.Selector(t) {
-  let ssl = atom.create_from_string("ssl")
-  let closed = atom.create_from_string("ssl_closed")
-  let error = atom.create_from_string("ssl_error")
+  let ssl = atom.create("ssl")
+  let closed = atom.create("ssl_closed")
+  let error = atom.create("ssl_error")
 
   selector
   |> process.select_record(ssl, 2, map_ssl_message(mapper))
@@ -982,14 +966,17 @@ pub fn selecting_tls_messages(
   |> process.select_record(error, 2, map_ssl_message(mapper))
 }
 
-fn map_tcp_message(mapper: fn(TcpMessage) -> t) -> fn(Dynamic) -> t {
-  fn(message) { mapper(unsafe_decode(message)) }
+fn map_tcp_message(mapper: fn(Message) -> t) -> fn(Dynamic) -> t {
+  fn(message) { mapper(unsafe_decode_tcp(message)) }
 }
 
 // TODO
-fn map_ssl_message(mapper: fn(TcpMessage) -> t) -> fn(Dynamic) -> t {
-  fn(message) { mapper(unsafe_decode(message)) }
+fn map_ssl_message(mapper: fn(Message) -> t) -> fn(Dynamic) -> t {
+  fn(message) { mapper(unsafe_decode_ssl(message)) }
 }
 
 @external(erlang, "mug_ffi", "coerce_tcp_message")
-fn unsafe_decode(message: Dynamic) -> TcpMessage
+fn unsafe_decode_tcp(message: Dynamic) -> Message
+
+@external(erlang, "mug_ffi", "coerce_ssl_message")
+fn unsafe_decode_ssl(message: Dynamic) -> Message
