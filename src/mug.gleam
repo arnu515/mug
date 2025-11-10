@@ -584,7 +584,7 @@ pub fn cacerts(
           _ -> verification_method
         }),
       )
-    _ -> options.tls_opts
+    NoTls -> options.tls_opts
   })
 }
 
@@ -614,7 +614,7 @@ pub fn certificates_keys(
           _ -> verification_method
         }),
       )
-    _ -> options.tls_opts
+    NoTls -> options.tls_opts
   })
 }
 
@@ -628,7 +628,7 @@ pub fn connect(options: ConnectionOptions) -> Result(Socket, ConnectError) {
         ssl_connect(host, options.port, opts, options.timeout)
         |> result.map(SslSocket)
       }
-      _ -> {
+      NoTls -> {
         get_tcp_options(use_inet6)
         |> gen_tcp_connect(host, options.port, _, options.timeout)
         |> result.map(TcpSocket)
@@ -967,7 +967,12 @@ pub fn select_tls_messages(
 }
 
 fn map_tcp_message(mapper: fn(Message) -> t) -> fn(Dynamic) -> t {
-  fn(message) { mapper(unsafe_decode_tcp(message)) }
+  fn(message) {
+    echo message
+    let a = unsafe_decode_tcp(message)
+    echo a
+    mapper(a)
+  }
 }
 
 // TODO
