@@ -354,7 +354,7 @@ pub fn describe_error(error: Error) -> String {
         system_cacerts.NoCacertsFound -> "No system certificates were found"
       }
     // TODO: better error message
-    TlsAlert(alert:, description:) -> "TLS Alert"
+    TlsAlert(_, description:) -> "TLS Alert: " <> description
   }
 }
 
