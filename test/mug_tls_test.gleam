@@ -7,25 +7,49 @@ import mug
 
 pub const port = 64_794
 
+// CA cert used for signing the server's cert
+pub const ca_crt = mug.PemEncodedCaCertificates("test/certs/ca.crt")
+
+// another CA cert that wasn't used for signing the server's cert
+pub const other_ca_crt = mug.PemEncodedCaCertificates("test/certs/ca.crt")
+
 fn connect() {
+  let assert Ok(socket) =
+    mug.new("localhost", port: port)
+    |> mug.with_tls()
+    |> mug.no_system_cacerts()
+    |> mug.cacerts(ca_crt)
+    |> mug.connect()
+  echo socket
+  let assert True = mug.socket_is_tls(socket)
+  socket
+}
+
+pub fn connect_self_signed_wrong_cert_test() {
+  let assert Error(mug.ConnectFailedIpv4(mug.TlsAlert(mug.UnknownCa, _))) =
+    mug.new("localhost", port: port)
+    |> mug.with_tls()
+    |> mug.no_system_cacerts()
+    |> mug.cacerts(other_ca_crt)
+    |> mug.ip_version_preference(mug.Ipv4Only)
+    |> mug.connect()
+}
+
+pub fn connect_without_verification_test() {
   let assert Ok(socket) =
     mug.new("localhost", port: port)
     |> mug.with_tls()
     |> mug.dangerously_disable_verification()
     |> mug.connect()
+  echo socket
   let assert True = mug.socket_is_tls(socket)
-  socket
-}
-
-pub fn connect_without_verification_test() {
-  let socket = connect()
   let assert Ok(_) = mug.shutdown(socket)
   Nil
 }
 
 pub fn connect_with_system_ca_test() {
   let assert Ok(socket) =
-    mug.new("example.com", port: 443)
+    mug.new("gleam.run", port: 443)
     |> mug.timeout(milliseconds: 10_000)
     |> mug.with_tls()
     |> mug.connect()
@@ -35,15 +59,18 @@ pub fn connect_with_system_ca_test() {
 
 pub fn connect_without_system_ca_test() {
   let assert Error(mug.ConnectFailedBoth(
-    mug.TlsAlert(mug.UnknownCa, _),
-    mug.TlsAlert(mug.UnknownCa, _),
+    mug.TlsAlert(mug.UnknownCa, desc1),
+    mug.TlsAlert(mug.UnknownCa, desc2),
   )) =
     mug.new("gleam.run", port: 443)
     |> mug.timeout(milliseconds: 10_000)
     |> mug.with_tls()
     |> mug.no_system_cacerts()
     |> mug.connect()
-  Nil
+
+  // This should crash with `badarg` if desc1 or desc2 aren't strings
+  let _ =
+    mug.describe_tls_alert(mug.UnknownCa) <> "-" <> desc1 <> " | " <> desc2
 }
 
 pub fn connect_invalid_host_test() {
@@ -109,25 +136,30 @@ pub fn upgrade_self_signed_test() {
     mug.new("localhost", port: port)
     |> mug.connect()
   // Erlang's SSL module currently errors on self-signed certificates,
-  // so when there's a way to use self-signed certificates later,
-  // this let assert should be testing for an Ok value instead.
-  let assert Error(mug.TlsAlert(alert: mug.BadCertificate, ..)) =
+  // but not if signed with an own (self-signed) CA.
+  let assert Ok(socket) =
     mug.upgrade(
       tcp_socket,
-      mug.Certificates(
-        False,
-        option.Some(mug.PemEncodedCaCertificates("test/certs/ca.crt")),
-        [
-          mug.PemEncodedCertificatesKeys(
-            certificate_path: "test/certs/server.crt",
-            key_path: "test/certs/server.key",
-            password: option.None,
-          ),
-        ],
-      ),
+      mug.Certificates(False, option.Some(ca_crt), []),
       1000,
     )
-  Nil
+  let msg = <<"Hello, Robert!\n":utf8>>
+  assert Ok(Nil) == mug.send(socket, msg)
+  let assert Ok(data) = mug.receive(socket, 500)
+  assert data == msg
+  assert Ok(Nil) == mug.shutdown(socket)
+}
+
+pub fn upgrade_self_signed_wrong_cert_test() {
+  let assert Ok(tcp_socket) =
+    mug.new("localhost", port: port)
+    |> mug.connect()
+  let assert Error(mug.TlsAlert(mug.UnknownCa, _)) =
+    mug.upgrade(
+      tcp_socket,
+      mug.Certificates(False, option.Some(other_ca_crt), []),
+      1000,
+    )
 }
 
 pub fn hello_world_test() {
@@ -135,7 +167,7 @@ pub fn hello_world_test() {
 
   // Nothing has been sent by the echo server yet, so we get a timeout if we try
   // to receive a packet.
-  let assert Error(mug.Timeout) = mug.receive(socket, timeout_milliseconds: 0)
+  let assert Error(mug.Timeout) = mug.receive(socket, timeout_milliseconds: 10)
 
   let assert Ok(Nil) = mug.send(socket, <<"Hello, Joe!\n":utf8>>)
   let assert Ok(Nil) = mug.send(socket, <<"Hello, Mike!\n":utf8>>)

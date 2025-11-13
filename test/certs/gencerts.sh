@@ -29,10 +29,15 @@ find . -maxdepth 1 -type f ! -name 'gencerts.sh' -delete
 
 echo "Generating the CA certificate and key..."
 openssl genrsa -out ca.key 4096
-openssl req -x509 -new -nodes -key ca.key -out ca.crt -days 3650 -subj '/C=XX/ST=XX/L=XX/O=XX/OU=XX/CN=localhost'
+openssl req -x509 -new -nodes -key ca.key -out ca.crt -days 3650 -subj '/C=XX/ST=XX/L=XX/O=XX/OU=XX/CN=Mug Test CA'
+
+echo "Generating another CA certificate and key for invalidate test"
+openssl genrsa -out ca_2.key 4096
+openssl req -x509 -new -nodes -key ca_2.key -out ca_2.crt -days 3650 -subj '/C=XX/ST=XX/L=XX/O=XX/OU=XX/CN=Mug Test CA'
+
 echo "Generating the certificate key..."
 openssl genrsa -out server.key 4096
 echo "Generating the certificate request..."
-openssl req -new -key server.key -out server.csr -addext "subjectAltName=DNS:localhost" -subj '/C=XX/ST=XX/L=XX/O=XX/OU=XX/CN=localhost'
+openssl req -new -key server.key -out server.csr -addext "subjectAltName=DNS:localhost, IP:127.0.0.1" -subj '/C=XX/ST=XX/L=XX/O=XX/OU=XX/CN=localhost'
 echo "Generating the certificate..."
 openssl x509 -req -days 365 -in server.csr -outform pem -CA ca.crt -CAkey ca.key -CAcreateserial -out server.crt -days 3650 -copy_extensions copy
