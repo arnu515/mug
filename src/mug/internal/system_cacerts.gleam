@@ -15,5 +15,14 @@ pub type SystemCacertificatesGetError {
   Eopnotsup
 }
 
+pub fn describe_error(err: SystemCacertificatesGetError) -> String {
+  case err {
+    Enoent -> "No such file or directory"
+    Enotsup -> "Not supported"
+    Eopnotsup -> "Operation not supported"
+    NoCacertsFound -> "No system certificates were found"
+  }
+}
+
 @external(erlang, "mug_ffi", "get_system_cacerts")
 pub fn get() -> Result(CombinedCert, SystemCacertificatesGetError)

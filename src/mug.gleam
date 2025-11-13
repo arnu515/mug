@@ -6,6 +6,7 @@ import gleam/erlang/process
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import mug/internal/ssl_options.{
   type ActiveValue, type CertKeyConf, type ModeValue, type SslOption, Binary,
   Cacertfile, Cacerts, CertsKeys, Verify, VerifyNone, VerifyPeer, active_once,
@@ -80,6 +81,40 @@ pub type TlsAlert {
   BadCertificateHashValue
   UnknownPskIdentity
   NoApplicationProtocol
+}
+
+pub fn describe_tls_alert(ta: TlsAlert) -> String {
+  case ta {
+    CloseNotify -> "Close notification"
+    UnexpectedMessage -> "Unexpected message"
+    BadRecordMac -> "Bad MAC record"
+    RecordOverflow -> "Record overflow"
+    HandshakeFailure -> "Handshake failure"
+    BadCertificate -> "Bad certificate"
+    UnsupportedCertificate -> "Unsupported certificate"
+    CertificateRevoked -> "Revoked certificate"
+    CertificateExpired -> "Expired certificate"
+    CertificateUnknown -> "Unkown certificate"
+    IllegalParameter -> "Illegal parameter"
+    UnknownCa -> "Unknown CA"
+    AccessDenied -> "Access denied"
+    DecodeError -> "Decode error"
+    DecryptError -> "Decrypt error"
+    ExportRestriction -> "Export restriction"
+    ProtocolVersion -> "Protocol version"
+    InsufficientSecurity -> "Insufficient security"
+    InternalError -> "Internal Error"
+    InappropriateFallback -> "Inappropriate fallback"
+    UserCanceled -> "User canceled"
+    NoRenegotiation -> "No renegotiation"
+    UnsupportedExtension -> "Unsupported extension"
+    CertificateUnobtainable -> "Certificate unobtainable"
+    UnrecognizedName -> "Unrecognized name"
+    BadCertificateStatusResponse -> "Bad certificate status response"
+    BadCertificateHashValue -> "Bad certificate hash value"
+    UnknownPskIdentity -> "Unknown PSK identity"
+    NoApplicationProtocol -> "No application protocol"
+  }
 }
 
 /// Errors that can occur when working with TCP sockets.
@@ -344,17 +379,12 @@ pub fn describe_error(error: Error) -> String {
     Estale -> "Stale file handle"
     Etxtbsy -> "Text file busy"
     Exdev -> "Cross-device link"
-    Options(_) -> "Invalid option passed"
+    Options(opt) -> "Invalid option passed: " <> string.inspect(opt)
     SystemCacertificatesGetError(err) ->
       "Unable to get system certificates: "
-      <> case err {
-        system_cacerts.Enoent -> "No such file or directory"
-        system_cacerts.Enotsup -> "Not supported"
-        system_cacerts.Eopnotsup -> "Operation not supported"
-        system_cacerts.NoCacertsFound -> "No system certificates were found"
-      }
-    // TODO: better error message
-    TlsAlert(_, description:) -> "TLS Alert: " <> description
+      <> system_cacerts.describe_error(err)
+    TlsAlert(alert:, description:) ->
+      "TLS Alert: " <> describe_tls_alert(alert) <> " - " <> description
   }
 }
 
@@ -399,7 +429,7 @@ pub type TlsOptions {
   TlsOptions(verification_method: TlsVerificationMethod)
 }
 
-/// The certificates to use 
+/// The certificates to use
 pub type TlsVerificationMethod {
   /// Uses these CA certificates and regular certificates to verify the server's certificate.
   ///
