@@ -11,7 +11,7 @@ pub const port = 64_794
 pub const ca_crt = mug.PemEncodedCaCertificates("test/certs/ca.crt")
 
 // another CA cert that wasn't used for signing the server's cert
-pub const other_ca_crt = mug.PemEncodedCaCertificates("test/certs/ca.crt")
+pub const other_ca_crt = mug.PemEncodedCaCertificates("test/certs/ca_2.crt")
 
 fn connect() {
   let assert Ok(socket) =
@@ -20,18 +20,17 @@ fn connect() {
     |> mug.no_system_cacerts()
     |> mug.cacerts(ca_crt)
     |> mug.connect()
-  echo socket
   let assert True = mug.socket_is_tls(socket)
   socket
 }
 
 pub fn connect_self_signed_wrong_cert_test() {
-  let assert Error(mug.ConnectFailedIpv4(mug.TlsAlert(mug.UnknownCa, _))) =
+  let assert Error(mug.ConnectFailedIpv6(mug.TlsAlert(mug.UnknownCa, _))) =
     mug.new("localhost", port: port)
     |> mug.with_tls()
     |> mug.no_system_cacerts()
+    |> mug.ip_version_preference(mug.Ipv6Only)
     |> mug.cacerts(other_ca_crt)
-    |> mug.ip_version_preference(mug.Ipv4Only)
     |> mug.connect()
 }
 
@@ -41,7 +40,6 @@ pub fn connect_without_verification_test() {
     |> mug.with_tls()
     |> mug.dangerously_disable_verification()
     |> mug.connect()
-  echo socket
   let assert True = mug.socket_is_tls(socket)
   let assert Ok(_) = mug.shutdown(socket)
   Nil

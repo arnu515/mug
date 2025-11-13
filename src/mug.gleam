@@ -8,9 +8,8 @@ import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
 import mug/internal/ssl_options.{
-  type ActiveValue, type CertKeyConf, type ModeValue, type SslOption, Binary,
-  Cacertfile, Cacerts, CertsKeys, Verify, VerifyNone, VerifyPeer, active_once,
-  combined_cert_into_cacerts, list_into_cacerts, passive,
+  type CertKeyConf, type SslOption, Cacertfile, Cacerts, CertsKeys, Verify,
+  VerifyNone, VerifyPeer, combined_cert_into_cacerts, list_into_cacerts,
 }
 import mug/internal/system_cacerts
 
@@ -651,15 +650,15 @@ pub fn certificates_keys(
 pub fn connect(options: ConnectionOptions) -> Result(Socket, ConnectError) {
   let host = charlist.from_string(options.host)
   let connect = fn(use_inet6: Bool) {
+    let tcp_opts = get_tcp_options(use_inet6)
     case options.tls_opts {
       UseTls(TlsOptions(vm)) -> {
-        use opts <- result.try(get_tls_options(vm, Some(use_inet6)))
-        ssl_connect(host, options.port, opts, options.timeout)
+        use opts <- result.try(get_tls_options(vm))
+        ssl_connect(host, options.port, tcp_opts, opts, options.timeout)
         |> result.map(SslSocket)
       }
       NoTls -> {
-        get_tcp_options(use_inet6)
-        |> gen_tcp_connect(host, options.port, _, options.timeout)
+        gen_tcp_connect(host, options.port, tcp_opts, options.timeout)
         |> result.map(TcpSocket)
       }
     }
@@ -714,6 +713,18 @@ type GenTcpOption {
   Mode(ModeValue)
 }
 
+type ActiveValue
+
+type ModeValue {
+  Binary
+}
+
+@external(erlang, "mug_ffi", "passive")
+fn passive() -> ActiveValue
+
+@external(erlang, "mug_ffi", "active_once")
+fn active_once() -> ActiveValue
+
 @external(erlang, "gen_tcp", "connect")
 fn gen_tcp_connect(
   host: Charlist,
@@ -726,28 +737,14 @@ fn gen_tcp_connect(
 fn ssl_connect(
   host: Charlist,
   port: Int,
+  tcp_options: List(GenTcpOption),
   options: List(SslOption),
   timeout: Int,
 ) -> Result(SslSocket, Error)
 
-fn get_tls_options(
-  vm: TlsVerificationMethod,
-  use_inet6: Option(Bool),
-) -> Result(List(SslOption), Error) {
-  let opts = [
-    // When data is received on the socket queue it in the TCP stack rather than
-    // sending it as an Erlang message to the socket owner's inbox.
-    ssl_options.Active(passive()),
-    // We want the data from the socket as bit arrays please, not lists.
-    ssl_options.Mode(Binary),
-  ]
-  let opts = case use_inet6 {
-    Some(True) -> [ssl_options.Inet6, ..opts]
-    Some(False) -> [ssl_options.Inet, ..opts]
-    None -> opts
-  }
+fn get_tls_options(vm: TlsVerificationMethod) -> Result(List(SslOption), Error) {
   case vm {
-    DangerouslyDisableVerification -> Ok([Verify(VerifyNone), ..opts])
+    DangerouslyDisableVerification -> Ok([Verify(VerifyNone)])
     Certificates(system, cacerts, certificates_keys) -> {
       use cacerts <- result.try(get_cacerts_opt(system, cacerts))
       Ok([
@@ -815,7 +812,7 @@ pub fn upgrade(
 ) -> Result(Socket, Error) {
   case socket {
     TcpSocket(socket) -> {
-      use opts <- result.try(get_tls_options(vm, None))
+      use opts <- result.try(get_tls_options(vm))
       ssl_upgrade(socket, opts, timeout)
       |> result.map(SslSocket)
     }
@@ -926,8 +923,7 @@ pub fn shutdown(socket: Socket) -> Result(Nil, Error)
 pub fn receive_next_packet_as_message(socket: Socket) -> Nil {
   case socket {
     TcpSocket(socket) -> set_tcp_socket_options(socket, [Active(active_once())])
-    SslSocket(socket) ->
-      set_ssl_socket_options(socket, [ssl_options.Active(active_once())])
+    SslSocket(socket) -> set_ssl_socket_options(socket, [Active(active_once())])
   }
   Nil
 }
@@ -938,10 +934,14 @@ fn set_tcp_socket_options(
   options: List(GenTcpOption),
 ) -> DoNotLeak
 
+/// The SSL socket can accept both `ssl` and `tcp` options.
+/// Since this is an internal method, a generalisation has not been
+/// made for convenience.
+/// 
 @external(erlang, "ssl", "setopts")
 fn set_ssl_socket_options(
   socket: SslSocket,
-  options: List(SslOption),
+  options: List(GenTcpOption),
 ) -> DoNotLeak
 
 /// Messages that can be sent by the socket to the process that controls it.
@@ -996,12 +996,7 @@ pub fn select_tls_messages(
 }
 
 fn map_tcp_message(mapper: fn(Message) -> t) -> fn(Dynamic) -> t {
-  fn(message) {
-    echo message
-    let a = unsafe_decode_tcp(message)
-    echo a
-    mapper(a)
-  }
+  fn(message) { mapper(unsafe_decode_tcp(message)) }
 }
 
 // TODO

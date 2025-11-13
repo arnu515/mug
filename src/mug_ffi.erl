@@ -1,7 +1,7 @@
 -module(mug_ffi).
 
 -export([send/2, recv/3, shutdown/1, coerce_tcp_message/1, active_once/0, passive/0]).
--export([ssl_upgrade/3, ssl_connect/4, ssl_downgrade/2, get_certs_keys/1, get_system_cacerts/0, coerce_ssl_message/1, coerce_unsafe/1]).
+-export([ssl_upgrade/3, ssl_connect/5, ssl_downgrade/2, get_certs_keys/1, get_system_cacerts/0, coerce_ssl_message/1, coerce_unsafe/1]).
 
 active_once() ->
     once.
@@ -27,8 +27,8 @@ shutdown({ssl_socket, Socket}) ->
 ssl_upgrade(Socket, Options, Timeout) ->
     normalise(ssl:connect(Socket, Options, Timeout)).
 
-ssl_connect(Host, Port, Options, Timeout) ->
-    normalise(ssl:connect(Host, Port, Options, Timeout)).
+ssl_connect(Host, Port, TcpOptions, Options, Timeout) ->
+    normalise(ssl:connect(Host, Port, TcpOptions ++ Options, Timeout)).
 
 get_certs_keys(CertsKeysList) ->
     lists:map(fun (CertsKeys) -> case CertsKeys of
