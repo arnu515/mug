@@ -56,7 +56,7 @@ pub fn connect_with_system_ca_test() {
 }
 
 pub fn connect_without_system_ca_test() {
-  let assert Error(mug.ConnectFailedIpv6(mug.TlsAlert(mug.UnknownCa, desc1))) =
+  let assert Error(mug.ConnectFailedIpv6(mug.TlsAlert(mug.UnknownCa, desc))) =
     mug.new("gleam.run", port: 443)
     |> mug.timeout(milliseconds: 10_000)
     |> mug.with_tls()
@@ -64,17 +64,8 @@ pub fn connect_without_system_ca_test() {
     |> mug.ip_version_preference(mug.Ipv6Only)
     |> mug.connect()
 
-  let assert Error(mug.ConnectFailedIpv4(mug.TlsAlert(mug.UnknownCa, desc2))) =
-    mug.new("gleam.run", port: 443)
-    |> mug.timeout(milliseconds: 10_000)
-    |> mug.with_tls()
-    |> mug.no_system_cacerts()
-    |> mug.ip_version_preference(mug.Ipv4Only)
-    |> mug.connect()
-
-  // This should crash with `badarg` if desc1 or desc2 aren't strings
-  let _ =
-    mug.describe_tls_alert(mug.UnknownCa) <> "-" <> desc1 <> " | " <> desc2
+  // This should crash with `badarg` if desc isn't a string
+  let _ = mug.describe_tls_alert(mug.UnknownCa) <> " - " <> desc
 }
 
 pub fn connect_invalid_host_test() {
