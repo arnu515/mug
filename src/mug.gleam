@@ -433,8 +433,8 @@ pub type TlsOptions {
 pub type TlsVerificationMethod {
   /// Uses these CA certificates and regular certificates to verify the server's certificate.
   ///
-  /// The `use_system_cacerts` option makes mug use the system's CA certificates, which are 
-  /// usually set to a group of competent CAs who sign most of the web's certificates.  
+  /// The `use_system_cacerts` option makes mug use the system's CA certificates, which are
+  /// usually set to a group of competent CAs who sign most of the web's certificates.
   /// You may specifiy your own CA certificates with the `cacerts` option, and custom
   /// certificates and their keys with the `certificates_keys` option.
   ///
@@ -483,7 +483,7 @@ pub type DerEncodedKeyAlgorithm {
 }
 
 pub type DerEncodedKey {
-  /// A der-encoded key.  
+  /// A der-encoded key.
   DerEncodedKey(algorithm: DerEncodedKeyAlgorithm, key: BitArray)
 }
 
@@ -618,15 +618,15 @@ pub fn cacerts(
   })
 }
 
-/// Set the certs_keys TLS [common cert option](https://www.erlang.org/doc/apps/ssl/ssl.html#t:common_option_cert/0).  
+/// Set the certs_keys TLS [common cert option](https://www.erlang.org/doc/apps/ssl/ssl.html#t:common_option_cert/0).
 ///
 /// The certificates_keys can be specified in two ways, a list of der-encoded certificates with their corresponding key, or
 /// the paths to a certfile and keyfile containing one or more PEM-certificates and their corresponding key. A password
 /// may also be specified for the file containing the key. Note that the entity certificate must be the first certificate
 /// in the der-encoded list or the pem-encoded file.
 ///
-/// For maximum interoperability, the certificates in the chain should be in the correct order, as the chain will be 
-/// sent as-is to the peer. If chain certificates are not provided, certificates from the configured trusted CA certificates 
+/// For maximum interoperability, the certificates in the chain should be in the correct order, as the chain will be
+/// sent as-is to the peer. If chain certificates are not provided, certificates from the configured trusted CA certificates
 /// will be used to construct the chain.
 ///
 /// If verification is disabled, this function does nothing.
@@ -648,7 +648,6 @@ pub fn certificates_keys(
   })
 }
 
-// TODO: Merge with method below
 pub fn connect(options: ConnectionOptions) -> Result(Socket, ConnectError) {
   let host = charlist.from_string(options.host)
   let connect = fn(use_inet6: Bool) {
@@ -835,12 +834,12 @@ fn ssl_downgrade(
 /// On successful downgrade, it returns the downgraded TCP socket, and *optionally*
 /// some binary data that must be treated as the first bytes received on the
 /// downgraded connection. If the connection gets closed instead of getting
-/// downgraded, then the `Closed` error is returned. 
+/// downgraded, then the `Closed` error is returned.
 ///
 /// If this function is called on a TcpSocket, it will return the same socket
 /// and None for the downgraded data.
 ///
-/// Internally, it uses [`ssl:close/2`](https://www.erlang.org/doc/apps/ssl/ssl.html#close/2) 
+/// Internally, it uses [`ssl:close/2`](https://www.erlang.org/doc/apps/ssl/ssl.html#close/2)
 /// to perform the downgrade, which returns `ok` if the socket is closed, while
 /// this function returns an error. It is recommended against using this function
 /// to close the socket. Use `shutdown` instead.

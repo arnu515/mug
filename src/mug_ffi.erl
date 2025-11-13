@@ -67,7 +67,7 @@ normalise({ok, T}) ->
 normalise({error, {timeout, _}}) ->
     {error, timeout};
 normalise({error, {tls_alert, {Alert, Description}}}) ->
-    {error, {tls_alert, Alert, list_to_binary(Description)}};
+    {error, {tls_alert, Alert, unicode:characters_to_binary(Description)}};
 normalise({error, _} = E) ->
     E.
 
