@@ -41,12 +41,13 @@ It also has SSL (TLS) support!
 // erlang key in the `gleam.toml` file.
 // More info here: https://gleam.run/writing-gleam/gleam-toml/
 
-import mug/tls as mug
+import mug
 
 pub fn main() {
   // Form a connection to a TCP+TLS server
   let assert Ok(socket) =
     mug.new("example.com", port: 443)  // HTTPS port!
+    |> mug.with_tls()
     |> mug.timeout(milliseconds: 5000)
     |> mug.connect()
 
@@ -66,7 +67,6 @@ encrypted connection (for example SMTP).
 ```gleam
 import gleam/option.{Some}
 import mug
-import mug/tls
 
 pub fn main() {
   // Form a connection to a TCP server
@@ -76,26 +76,26 @@ pub fn main() {
     |> mug.connect()
 
   // Talk over plain text!
-  let assert Ok(Nil) = mug.send(socket, <<"Let's upgrade!\n":utf8>>)
+  assert Ok(Nil) == mug.send(socket, <<"Let's upgrade!\n":utf8>>)
   let assert Ok(_) = mug.receive(socket, timeout_milliseconds: 100)
 
   // Now upgrade the connection
-  let assert Ok(socket) = tls.upgrade(
+  let assert Ok(socket) = mug.upgrade(
     tcp_socket,
     // Do not check certificates (Do not use in prod!!)
-    tls.NoVerification,
+    mug.DangerouslyDisableVerification,
     // Timeout after 1000 millis
     milliseconds: 1000
   )
 
   // Talk over an encrypted connection!
   let assert Ok(Nil) =
-    tls.send(socket, <<"Hello, Joe!\n":utf8>>)
-  let assert Ok(_) = tls.receive(socket, 5000)
+    mug.send(socket, <<"Hello, Joe!\n":utf8>>)
+  let assert Ok(_) = mug.receive(socket, 5000)
 
   // Downgrade to an unencrypted connection
-  case tls.downgrade(socket, milliseconds: 1000) {
-    Error(tls.Closed) -> {
+  case mug.downgrade(socket, milliseconds: 1000) {
+    Error(mug.Closed) -> {
       // Downgrade failed, so the connection was closed.
       Nil
     }
@@ -103,7 +103,7 @@ pub fn main() {
       // `data` is the first piece of data received (if any)
       // after downgrade
       let assert Some(_) = data
-      let assert Ok(Nil) = mug.send(socket, <<"Scary unencrypted connection!\n":utf8>>)
+      assert Ok(Nil) == mug.send(socket, <<"Scary unencrypted connection!\n":utf8>>)
     }
     Error(_) -> {
       // Downgrade failed for other reasons
