@@ -1,7 +1,13 @@
 -module(mug_ffi).
 
--export([send/2, recv/3, shutdown/1, coerce_tcp_message/1, active_once/0, passive/0]).
--export([ssl_upgrade/3, ssl_connect/5, ssl_downgrade/2, get_certs_keys/1, get_system_cacerts/0, coerce_ssl_message/1, coerce_unsafe/1]).
+-export([
+    send/2, recv/3, shutdown/1, active_once/0, passive/0, ssl_upgrade/3,
+    ssl_connect/5, ssl_downgrade/2, get_certs_keys/1, get_system_cacerts/0,
+    coerce_tcp_message/1, coerce_ssl_message/1,
+    combined_certs_to_der_encoded/1, coerce_list_into_cacerts/1
+]).
+
+ -include_lib("public_key/include/public_key.hrl").
 
 active_once() ->
     once.
@@ -12,12 +18,12 @@ passive() ->
 send({tcp_socket, Socket}, Packet) ->
     normalise(gen_tcp:send(Socket, Packet));
 send({ssl_socket, Socket}, Packet) ->
-		normalise(ssl:send(Socket, Packet)).
+    normalise(ssl:send(Socket, Packet)).
 
 recv({tcp_socket, Socket}, Length, Timeout) ->
     gen_tcp:recv(Socket, Length, Timeout);
 recv({ssl_socket, Socket}, Length, Timeout) ->
-		ssl:recv(Socket, Length, Timeout).
+    ssl:recv(Socket, Length, Timeout).
 
 shutdown({tcp_socket, Socket}) ->
     normalise(gen_tcp:shutdown(Socket, read_write));
@@ -83,4 +89,21 @@ coerce_ssl_message({ssl_closed, Socket}) ->
     {socket_closed, {ssl_socket, Socket}};
 coerce_ssl_message({ssl_error, Socket, Error}) ->
     {ssl_error, {ssl_socket, Socket}, Error}.
-coerce_unsafe(X) -> X.
+
+combined_certs_to_der_encoded(X) when is_list(X) ->
+    lists:map(fun(#cert{der = Der}) -> Der end, X).
+
+coerce_list_into_cacerts([]) -> [];
+% only [public_key:der_encoded()] or [public_key:combined_cert()] is allowed
+coerce_list_into_cacerts(X) when is_list(X) ->
+    Check = fun(I, A) ->
+        case A of
+            unknown -> if is_binary(I) -> der_encoded; element(1, I) =:= element(1, #cert{}) -> combined_cert end;
+            der_encoded -> if is_binary(I) -> der_encoded end;
+            combined_cert -> if element(1, I) =:= element(1, #cert{}) -> combined_cert end
+        end
+    end,
+    case lists:foldl(Check, unknown, X) of
+        der_encoded -> X;
+        combined_cert -> X
+    end.

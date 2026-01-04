@@ -1,8 +1,5 @@
-import gleam/dynamic.{type Dynamic}
-
-/// Adapted from https://www.erlang.org/doc/apps/public_key/public_key#t:combined_cert/0
-pub type CombinedCert =
-  #(List(BitArray), #(Dynamic, Dynamic, Dynamic))
+/// https://www.erlang.org/doc/apps/public_key/public_key#t:combined_cert/0
+pub type CombinedCert
 
 pub type SystemCacertificatesGetError {
   /// Error accessing CA certificate files
@@ -25,4 +22,4 @@ pub fn describe_error(err: SystemCacertificatesGetError) -> String {
 }
 
 @external(erlang, "mug_ffi", "get_system_cacerts")
-pub fn get() -> Result(CombinedCert, SystemCacertificatesGetError)
+pub fn get() -> Result(List(CombinedCert), SystemCacertificatesGetError)

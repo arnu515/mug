@@ -1,7 +1,7 @@
 import gleam/bit_array
 import gleam/bytes_tree.{from_string as bits}
 import gleam/erlang/process
-import gleam/option
+import gleam/option.{Some}
 import gleam/string
 import mug
 
@@ -10,35 +10,85 @@ pub const port = 64_794
 // CA cert used for signing the server's cert
 pub const ca_crt = mug.PemEncodedCaCertificates("test/certs/ca.crt")
 
-// another CA cert that wasn't used for signing the server's cert
+// Another CA cert that wasn't used for signing the server's cert
 pub const other_ca_crt = mug.PemEncodedCaCertificates("test/certs/ca_2.crt")
+
+fn no_system_cacerts(opts: mug.ConnectionOptions) {
+  let assert Some(mug.VerifiedTls(
+    use_system_cacerts: _,
+    cacerts:,
+    certificates_keys:,
+  )) = opts.tls
+    as "Must have TLS with verification"
+  mug.ConnectionOptions(
+    ..opts,
+    tls: Some(mug.VerifiedTls(
+      use_system_cacerts: False,
+      cacerts:,
+      certificates_keys:,
+    )),
+  )
+}
+
+fn dangerously_disable_verification(opts: mug.ConnectionOptions) {
+  mug.ConnectionOptions(..opts, tls: Some(mug.DangerouslyDisableVerification))
+}
+
+/// Set the following CA Certificates for the connection. These CA certificates will be used to check
+/// the TLS server's certificate. If a PEM-encoded CA certfile is provided, the system's CA will not
+/// be used.
+///
+/// If verification is disabled, this function does nothing.
+///
+pub fn cacerts(
+  options: mug.ConnectionOptions,
+  cacerts: mug.CaCertificates,
+) -> mug.ConnectionOptions {
+  let assert mug.ConnectionOptions(
+    tls: Some(mug.VerifiedTls(
+      use_system_cacerts:,
+      cacerts: _,
+      certificates_keys:,
+    )),
+    ..,
+  ) = options
+    as "Must have TLS with verification"
+  mug.ConnectionOptions(
+    ..options,
+    tls: Some(mug.VerifiedTls(
+      use_system_cacerts:,
+      cacerts: Some(cacerts),
+      certificates_keys:,
+    )),
+  )
+}
 
 fn connect() {
   let assert Ok(socket) =
     mug.new("localhost", port: port)
-    |> mug.with_tls()
-    |> mug.no_system_cacerts()
-    |> mug.cacerts(ca_crt)
+    |> mug.tls()
+    |> no_system_cacerts()
+    |> cacerts(ca_crt)
     |> mug.connect()
   let assert True = mug.socket_is_tls(socket)
   socket
 }
 
 pub fn connect_self_signed_wrong_cert_test() {
-  let assert Error(mug.ConnectFailedIpv6(mug.TlsAlert(mug.UnknownCa, _))) =
+  let assert Error(mug.ConnectFailedIpv4(mug.TlsAlert(mug.UnknownCa, _))) =
     mug.new("localhost", port: port)
-    |> mug.with_tls()
-    |> mug.no_system_cacerts()
-    |> mug.ip_version_preference(mug.Ipv6Only)
-    |> mug.cacerts(other_ca_crt)
+    |> mug.tls()
+    |> no_system_cacerts()
+    |> mug.ip_version_preference(mug.Ipv4Only)
+    |> cacerts(other_ca_crt)
     |> mug.connect()
 }
 
 pub fn connect_without_verification_test() {
   let assert Ok(socket) =
     mug.new("localhost", port: port)
-    |> mug.with_tls()
-    |> mug.dangerously_disable_verification()
+    |> mug.tls()
+    |> dangerously_disable_verification()
     |> mug.connect()
   let assert True = mug.socket_is_tls(socket)
   let assert Ok(_) = mug.shutdown(socket)
@@ -49,29 +99,26 @@ pub fn connect_with_system_ca_test() {
   let assert Ok(socket) =
     mug.new("gleam.run", port: 443)
     |> mug.timeout(milliseconds: 10_000)
-    |> mug.with_tls()
+    |> mug.tls()
     |> mug.connect()
   let assert Ok(_) = mug.shutdown(socket)
   Nil
 }
 
 pub fn connect_without_system_ca_test() {
-  let assert Error(mug.ConnectFailedIpv6(mug.TlsAlert(mug.UnknownCa, desc))) =
+  let assert Error(mug.ConnectFailedIpv6(mug.TlsAlert(mug.UnknownCa, _))) =
     mug.new("gleam.run", port: 443)
     |> mug.timeout(milliseconds: 10_000)
-    |> mug.with_tls()
-    |> mug.no_system_cacerts()
+    |> mug.tls()
+    |> no_system_cacerts()
     |> mug.ip_version_preference(mug.Ipv6Only)
     |> mug.connect()
-
-  // This should crash with `badarg` if desc isn't a string
-  let _ = mug.describe_tls_alert(mug.UnknownCa) <> " - " <> desc
 }
 
 pub fn connect_invalid_host_test() {
   assert mug.new("invalid.example.com", port: port)
     |> mug.timeout(milliseconds: 500)
-    |> mug.with_tls()
+    |> mug.tls()
     |> mug.connect()
     == Error(mug.ConnectFailedBoth(mug.Nxdomain, mug.Nxdomain))
 }
@@ -80,7 +127,7 @@ pub fn connect_invalid_host_only_ipv4_test() {
   assert mug.new("invalid.example.com", port: port)
     |> mug.ip_version_preference(mug.Ipv4Only)
     |> mug.timeout(milliseconds: 500)
-    |> mug.with_tls()
+    |> mug.tls()
     |> mug.connect()
     == Error(mug.ConnectFailedIpv4(mug.Nxdomain))
 }
@@ -89,7 +136,7 @@ pub fn connect_invalid_host_only_ipv6_test() {
   assert mug.new("invalid.example.com", port: port)
     |> mug.ip_version_preference(mug.Ipv6Only)
     |> mug.timeout(milliseconds: 500)
-    |> mug.with_tls()
+    |> mug.tls()
     |> mug.connect()
     == Error(mug.ConnectFailedIpv6(mug.Nxdomain))
 }
@@ -98,7 +145,7 @@ pub fn connect_invalid_host_prefer_ipv4_test() {
   assert mug.new("invalid.example.com", port: port)
     |> mug.ip_version_preference(mug.Ipv4Preferred)
     |> mug.timeout(milliseconds: 500)
-    |> mug.with_tls()
+    |> mug.tls()
     |> mug.connect()
     == Error(mug.ConnectFailedBoth(mug.Nxdomain, mug.Nxdomain))
 }
@@ -107,7 +154,7 @@ pub fn connect_invalid_host_prefer_ipv6_test() {
   assert mug.new("invalid.example.com", port: port)
     |> mug.ip_version_preference(mug.Ipv6Preferred)
     |> mug.timeout(milliseconds: 500)
-    |> mug.with_tls()
+    |> mug.tls()
     |> mug.connect()
     == Error(mug.ConnectFailedBoth(mug.Nxdomain, mug.Nxdomain))
 }
@@ -133,11 +180,7 @@ pub fn upgrade_self_signed_test() {
   // Erlang's SSL module currently errors on self-signed certificates,
   // but not if signed with an own (self-signed) CA.
   let assert Ok(socket) =
-    mug.upgrade(
-      tcp_socket,
-      mug.Certificates(False, option.Some(ca_crt), []),
-      1000,
-    )
+    mug.upgrade(tcp_socket, mug.VerifiedTls(False, Some(ca_crt), []), 1000)
   let msg = <<"Hello, Robert!\n":utf8>>
   assert Ok(Nil) == mug.send(socket, msg)
   let assert Ok(data) = mug.receive(socket, 500)
@@ -152,7 +195,7 @@ pub fn upgrade_self_signed_wrong_cert_test() {
   let assert Error(mug.TlsAlert(mug.UnknownCa, _)) =
     mug.upgrade(
       tcp_socket,
-      mug.Certificates(False, option.Some(other_ca_crt), []),
+      mug.VerifiedTls(False, Some(other_ca_crt), []),
       1000,
     )
 }

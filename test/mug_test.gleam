@@ -26,7 +26,6 @@ pub fn main() {
 
       glisten.continue(state)
     })
-  // TODO: use new glisten methods
   let assert Ok(_) = glisten.start(builder, port)
   let assert Ok(_) =
     glisten.with_tls(

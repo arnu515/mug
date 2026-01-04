@@ -18,9 +18,13 @@ pub type CertKeyConf
 pub type CacertsValue
 
 /// Coerce a list of DER-encoded bitarrays into ssl_options.CacertsValue
-@external(erlang, "mug_ffi", "coerce_unsafe")
-pub fn list_into_cacerts(x: List(BitArray)) -> CacertsValue
+@external(erlang, "mug_ffi", "combined_certs_to_der_encoded")
+pub fn combined_certs_into_der_encoded(x: List(CombinedCert)) -> List(BitArray)
+
+/// Coerce a list of DER-encoded bitarrays into ssl_options.CacertsValue
+@external(erlang, "mug_ffi", "coerce_list_into_cacerts")
+pub fn der_into_cacerts(x: List(BitArray)) -> CacertsValue
 
 /// Coerce the combined certs into ssl_options.CacertsValue
-@external(erlang, "mug_ffi", "coerce_unsafe")
-pub fn combined_cert_into_cacerts(x: CombinedCert) -> CacertsValue
+@external(erlang, "mug_ffi", "coerce_list_into_cacerts")
+pub fn combined_cert_into_cacerts(x: List(CombinedCert)) -> CacertsValue

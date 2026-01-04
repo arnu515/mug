@@ -9,7 +9,8 @@ import gleam/result
 import gleam/string
 import mug/internal/ssl_options.{
   type CertKeyConf, type SslOption, Cacertfile, Cacerts, CertsKeys, Verify,
-  VerifyNone, VerifyPeer, combined_cert_into_cacerts, list_into_cacerts,
+  VerifyNone, VerifyPeer, combined_cert_into_cacerts,
+  combined_certs_into_der_encoded, der_into_cacerts,
 }
 import mug/internal/system_cacerts
 
@@ -411,25 +412,20 @@ pub type ConnectionOptions {
     /// The default is `Ipv6Preferred`.
     ///
     ip_version_preference: IpVersionPreference,
-    /// TLS options
-    tls_opts: TlsConnectionOptions,
+    /// TLS configuration. Set to None to use unencrypted TCP. To use TLS,
+    /// use the convenience method `tls`.
+    ///
+    /// TLS is disabled by default.
+    /// 
+    tls: Option(TlsConfiguration),
   )
 }
 
-pub type TlsConnectionOptions {
-  /// Do not use TLS, use plain TCP
-  NoTls
-  /// Start with a TLS connection
-  UseTls(TlsOptions)
-}
+pub type TlsConfiguration {
+  /// Do not verify certificates. While this does allow you to use self-signed certificates.
+  /// It is highly recommended to not skip verification and instead add a custom CA.
+  DangerouslyDisableVerification
 
-/// Configuration for TLS connections.
-pub type TlsOptions {
-  TlsOptions(verification_method: TlsVerificationMethod)
-}
-
-/// The certificates to use
-pub type TlsVerificationMethod {
   /// Uses these CA certificates and regular certificates to verify the server's certificate.
   ///
   /// The `use_system_cacerts` option makes mug use the system's CA certificates, which are
@@ -443,14 +439,11 @@ pub type TlsVerificationMethod {
   /// certs override PEM-encoded ones. Therefore, if you wish to use a PEM encoded CA cert along
   /// with the system's CA, you should decode the PEM into a DER using (`public_key:pem_decode`)[https://www.erlang.org/doc/apps/public_key/public_key.html#pem-api]
   /// and use the DerEncodedCaCertificates variant instead.
-  Certificates(
+  VerifiedTls(
     use_system_cacerts: Bool,
     cacerts: Option(CaCertificates),
     certificates_keys: List(CertificatesKeys),
   )
-  /// Do not verify certificates. While this does allow you to use self-signed certificates.
-  /// It is highly recommended to not skip verification, add a custom CA instead.
-  DangerouslyDisableVerification
 }
 
 /// The CA certificates to use
@@ -494,7 +487,7 @@ pub fn new(host: String, port port: Int) -> ConnectionOptions {
     port: port,
     timeout: 1000,
     ip_version_preference: Ipv6Preferred,
-    tls_opts: NoTls,
+    tls: None,
   )
 }
 
@@ -550,138 +543,54 @@ pub type IpVersionPreference {
 ///
 /// Uses the system's CA certificates to verify the server's certificate.
 ///
-pub fn with_tls(options) {
+pub fn tls(options: ConnectionOptions) -> ConnectionOptions {
   ConnectionOptions(
     ..options,
-    tls_opts: UseTls(
-      TlsOptions(
-        verification_method: Certificates(
-          use_system_cacerts: True,
-          cacerts: None,
-          certificates_keys: [],
-        ),
+    tls: Some(
+      VerifiedTls(
+        use_system_cacerts: True,
+        cacerts: None,
+        certificates_keys: [],
       ),
     ),
   )
 }
 
-/// Do not verify the server's certificate. This is dangerous and is not
-/// recommended. Use a custom certificate instead.
-pub fn dangerously_disable_verification(options) {
-  ConnectionOptions(
-    ..options,
-    tls_opts: UseTls(TlsOptions(
-      verification_method: DangerouslyDisableVerification,
-    )),
-  )
-}
-
-/// Do not use the system's CA certificates to verify the server's certificate.
-///
-/// This is useful when you want to use your own CA certificates to verify the
-/// server's certificate. If verification is disabled, this function does nothing.
-pub fn no_system_cacerts(options) {
-  ConnectionOptions(..options, tls_opts: case options.tls_opts {
-    UseTls(TlsOptions(verification_method)) ->
-      UseTls(
-        TlsOptions(verification_method: case verification_method {
-          Certificates(_, cacerts, certificates_keys) ->
-            Certificates(False, cacerts, certificates_keys)
-          _ -> verification_method
-        }),
-      )
-    _ -> options.tls_opts
-  })
-}
-
-/// Set the following CA Certificates for the connection. These CA certificates will be used to check
-/// the TLS server's certificate. If a PEM-encoded CA certfile is provided, the system's CA will not
-/// be used.
-///
-/// If verification is disabled, this function does nothing.
-///
-pub fn cacerts(
-  options: ConnectionOptions,
-  cacerts: CaCertificates,
-) -> ConnectionOptions {
-  ConnectionOptions(..options, tls_opts: case options.tls_opts {
-    UseTls(TlsOptions(verification_method)) ->
-      UseTls(
-        TlsOptions(verification_method: case verification_method {
-          Certificates(system, _, certificates_keys) ->
-            Certificates(system, Some(cacerts), certificates_keys)
-          _ -> verification_method
-        }),
-      )
-    NoTls -> options.tls_opts
-  })
-}
-
-/// Set the certs_keys TLS [common cert option](https://www.erlang.org/doc/apps/ssl/ssl.html#t:common_option_cert/0).
-///
-/// The certificates_keys can be specified in two ways, a list of der-encoded certificates with their corresponding key, or
-/// the paths to a certfile and keyfile containing one or more PEM-certificates and their corresponding key. A password
-/// may also be specified for the file containing the key. Note that the entity certificate must be the first certificate
-/// in the der-encoded list or the pem-encoded file.
-///
-/// For maximum interoperability, the certificates in the chain should be in the correct order, as the chain will be
-/// sent as-is to the peer. If chain certificates are not provided, certificates from the configured trusted CA certificates
-/// will be used to construct the chain.
-///
-/// If verification is disabled, this function does nothing.
-///
-pub fn certificates_keys(
-  options: ConnectionOptions,
-  certificates_keys certificates_keys: List(CertificatesKeys),
-) -> ConnectionOptions {
-  ConnectionOptions(..options, tls_opts: case options.tls_opts {
-    UseTls(TlsOptions(verification_method)) ->
-      UseTls(
-        TlsOptions(verification_method: case verification_method {
-          Certificates(system, cacerts, _) ->
-            Certificates(system, cacerts, certificates_keys)
-          _ -> verification_method
-        }),
-      )
-    NoTls -> options.tls_opts
-  })
-}
-
 pub fn connect(options: ConnectionOptions) -> Result(Socket, ConnectError) {
   let host = charlist.from_string(options.host)
-  let connect = fn(use_inet6: Bool) {
-    let tcp_opts = get_tcp_options(use_inet6)
-    case options.tls_opts {
-      UseTls(TlsOptions(vm)) -> {
-        use opts <- result.try(get_tls_options(vm))
+  let connect = fn(ip_ver: IpVersion) {
+    let tcp_opts = get_tcp_options(ip_ver)
+    case options.tls {
+      Some(tls_opts) -> {
+        use opts <- result.try(get_tls_options(tls_opts))
         ssl_connect(host, options.port, tcp_opts, opts, options.timeout)
         |> result.map(SslSocket)
       }
-      NoTls -> {
+      None -> {
         gen_tcp_connect(host, options.port, tcp_opts, options.timeout)
         |> result.map(TcpSocket)
       }
     }
   }
   case options.ip_version_preference {
-    Ipv4Only -> connect(False) |> result.map_error(ConnectFailedIpv4)
-    Ipv6Only -> connect(True) |> result.map_error(ConnectFailedIpv6)
+    Ipv4Only -> connect(Ipv4) |> result.map_error(ConnectFailedIpv4)
+    Ipv6Only -> connect(Ipv6) |> result.map_error(ConnectFailedIpv6)
 
     Ipv4Preferred ->
-      case connect(False) {
+      case connect(Ipv4) {
         Ok(conn) -> Ok(conn)
         Error(ipv4) ->
-          case connect(True) {
+          case connect(Ipv6) {
             Ok(conn) -> Ok(conn)
             Error(ipv6) -> Error(ConnectFailedBoth(ipv4:, ipv6:))
           }
       }
 
     Ipv6Preferred ->
-      case connect(True) {
+      case connect(Ipv6) {
         Ok(conn) -> Ok(conn)
         Error(ipv6) ->
-          case connect(False) {
+          case connect(Ipv4) {
             Ok(conn) -> Ok(conn)
             Error(ipv4) -> Error(ConnectFailedBoth(ipv4:, ipv6:))
           }
@@ -690,11 +599,11 @@ pub fn connect(options: ConnectionOptions) -> Result(Socket, ConnectError) {
 }
 
 /// Returns the default gen_tcp options for mug
-fn get_tcp_options(use_inet6: Bool) -> List(GenTcpOption) {
+fn get_tcp_options(ip_ver: IpVersion) -> List(GenTcpOption) {
   [
-    case use_inet6 {
-      True -> Inet
-      False -> Inet6
+    case ip_ver {
+      Ipv4 -> Inet
+      Ipv6 -> Inet6
     },
     // When data is received on the socket queue it in the TCP stack rather than
     // sending it as an Erlang message to the socket owner's inbox.
@@ -702,6 +611,11 @@ fn get_tcp_options(use_inet6: Bool) -> List(GenTcpOption) {
     // We want the data from the socket as bit arrays please, not lists.
     Mode(Binary),
   ]
+}
+
+type IpVersion {
+  Ipv6
+  Ipv4
 }
 
 type GenTcpOption {
@@ -742,10 +656,10 @@ fn ssl_connect(
   timeout: Int,
 ) -> Result(SslSocket, Error)
 
-fn get_tls_options(vm: TlsVerificationMethod) -> Result(List(SslOption), Error) {
-  case vm {
+fn get_tls_options(opts: TlsConfiguration) -> Result(List(SslOption), Error) {
+  case opts {
     DangerouslyDisableVerification -> Ok([Verify(VerifyNone)])
-    Certificates(system, cacerts, certificates_keys) -> {
+    VerifiedTls(system, cacerts, certificates_keys) -> {
       use cacerts <- result.try(get_cacerts_opt(system, cacerts))
       Ok([
         Verify(VerifyPeer),
@@ -762,12 +676,14 @@ fn get_cacerts_opt(
 ) -> Result(SslOption, Error) {
   case system, cacerts {
     False, Some(DerEncodedCaCertificates(cacerts)) ->
-      Ok(Cacerts(list_into_cacerts(cacerts)))
+      Ok(Cacerts(der_into_cacerts(cacerts)))
     True, Some(DerEncodedCaCertificates(cacerts)) -> {
       let certs =
-        system_cacerts.get() |> result.map_error(SystemCacertificatesGetError)
+        system_cacerts.get()
+        |> result.map(combined_certs_into_der_encoded)
+        |> result.map_error(SystemCacertificatesGetError)
       use certs <- result.try(certs)
-      Ok(Cacerts(list_into_cacerts(list.flatten([certs.0, cacerts]))))
+      Ok(Cacerts(der_into_cacerts(list.flatten([certs, cacerts]))))
     }
     _, Some(PemEncodedCaCertificates(cacerts)) ->
       Ok(Cacertfile(charlist.from_string(cacerts)))
@@ -777,7 +693,7 @@ fn get_cacerts_opt(
       use certs <- result.try(certs)
       Ok(Cacerts(combined_cert_into_cacerts(certs)))
     }
-    False, None -> Ok(Cacerts(list_into_cacerts([])))
+    False, None -> Ok(Cacerts(der_into_cacerts([])))
   }
 }
 
@@ -807,12 +723,12 @@ fn ssl_upgrade(
 ///
 pub fn upgrade(
   socket: Socket,
-  verification_method vm: TlsVerificationMethod,
+  config tls_opts: TlsConfiguration,
   timeout timeout: Int,
 ) -> Result(Socket, Error) {
   case socket {
     TcpSocket(socket) -> {
-      use opts <- result.try(get_tls_options(vm))
+      use opts <- result.try(get_tls_options(tls_opts))
       ssl_upgrade(socket, opts, timeout)
       |> result.map(SslSocket)
     }
@@ -833,13 +749,8 @@ fn ssl_downgrade(
 /// downgraded connection. If the connection gets closed instead of getting
 /// downgraded, then the `Closed` error is returned.
 ///
-/// If this function is called on a TcpSocket, it will return the same socket
+/// If this function is called on a TCP socket, it will return the same socket
 /// and None for the downgraded data.
-///
-/// Internally, it uses [`ssl:close/2`](https://www.erlang.org/doc/apps/ssl/ssl.html#close/2)
-/// to perform the downgrade, which returns `ok` if the socket is closed, while
-/// this function returns an error. It is recommended against using this function
-/// to close the socket. Use `shutdown` instead.
 ///
 pub fn downgrade(
   socket: Socket,
@@ -999,7 +910,6 @@ fn map_tcp_message(mapper: fn(Message) -> t) -> fn(Dynamic) -> t {
   fn(message) { mapper(unsafe_decode_tcp(message)) }
 }
 
-// TODO
 fn map_ssl_message(mapper: fn(Message) -> t) -> fn(Dynamic) -> t {
   fn(message) { mapper(unsafe_decode_ssl(message)) }
 }
