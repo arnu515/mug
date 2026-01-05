@@ -97,7 +97,7 @@ pub fn connect_without_verification_test() {
 
 pub fn connect_with_system_ca_test() {
   let assert Ok(socket) =
-    mug.new("example.com", port: 443)
+    mug.new("github.com", port: 443)
     |> mug.timeout(milliseconds: 10_000)
     |> mug.tls()
     |> mug.connect()
@@ -107,7 +107,7 @@ pub fn connect_with_system_ca_test() {
 
 pub fn connect_without_system_ca_test() {
   let assert Error(mug.ConnectFailedIpv6(mug.TlsAlert(mug.UnknownCa, _))) =
-    mug.new("example.com", port: 443)
+    mug.new("github.com", port: 443)
     |> mug.timeout(milliseconds: 10_000)
     |> mug.tls()
     |> no_system_cacerts()
